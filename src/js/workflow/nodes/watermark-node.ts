@@ -54,6 +54,18 @@ export class WatermarkNode extends BaseWorkflowNode {
       'flatten',
       new ClassicPreset.InputControl('text', { initial: 'no' })
     );
+    this.addControl(
+      'repeat',
+      new ClassicPreset.InputControl('text', { initial: 'no' })
+    );
+    this.addControl(
+      'hSpacing',
+      new ClassicPreset.InputControl('number', { initial: 200 })
+    );
+    this.addControl(
+      'vSpacing',
+      new ClassicPreset.InputControl('number', { initial: 150 })
+    );
   }
 
   async data(
@@ -99,6 +111,10 @@ export class WatermarkNode extends BaseWorkflowNode {
     const pagesStr = getText('pages', 'all').trim().toLowerCase();
     const shouldFlatten =
       getText('flatten', 'no').trim().toLowerCase() === 'yes';
+    const repeat = getText('repeat', 'no').trim().toLowerCase() === 'yes';
+    const tile = repeat
+      ? { hSpacing: getNum('hSpacing', 200), vSpacing: getNum('vSpacing', 150) }
+      : undefined;
 
     return {
       pdf: await processBatch(pdfInputs, async (input) => {
@@ -117,6 +133,7 @@ export class WatermarkNode extends BaseWorkflowNode {
           x,
           y: 1 - y,
           pageIndices,
+          tile,
         });
 
         if (shouldFlatten) {

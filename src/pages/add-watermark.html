@@ -227,6 +227,10 @@
                 >
                   <canvas id="preview-canvas"></canvas>
                   <div
+                    id="watermark-tile-layer"
+                    class="absolute inset-0 overflow-hidden pointer-events-none"
+                  ></div>
+                  <div
                     id="watermark-box"
                     class="absolute pointer-events-auto"
                     style="
@@ -529,6 +533,67 @@
                   >
                     Bottom Right
                   </button>
+                </div>
+              </div>
+
+              <div>
+                <div
+                  class="flex items-center gap-2 bg-gray-900 rounded-lg px-3 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    id="repeat-watermark"
+                    class="w-4 h-4 accent-indigo-500 bg-gray-700 border-gray-600 rounded focus:ring-indigo-500"
+                  />
+                  <label
+                    for="repeat-watermark"
+                    class="text-sm text-gray-300 cursor-pointer"
+                    data-i18n="tools:addWatermark.repeatWatermark"
+                    >Repeat watermark</label
+                  >
+                </div>
+
+                <div id="repeat-spacing-options" class="hidden mt-3">
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label
+                        for="h-spacing"
+                        class="block mb-1.5 text-sm font-medium text-gray-300"
+                        data-i18n="tools:addWatermark.horizontalSpacing"
+                        >Horizontal spacing</label
+                      >
+                      <input
+                        type="number"
+                        id="h-spacing"
+                        value="200"
+                        min="20"
+                        max="2000"
+                        class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        for="v-spacing"
+                        class="block mb-1.5 text-sm font-medium text-gray-300"
+                        data-i18n="tools:addWatermark.verticalSpacing"
+                        >Vertical spacing</label
+                      >
+                      <input
+                        type="number"
+                        id="v-spacing"
+                        value="150"
+                        min="20"
+                        max="2000"
+                        class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <p
+                    class="text-xs text-gray-500 mt-1.5"
+                    data-i18n="tools:addWatermark.spacingHelp"
+                  >
+                    Center-to-center distance in points.
+                  </p>
                 </div>
               </div>
 

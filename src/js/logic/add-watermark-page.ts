@@ -288,6 +288,9 @@ function getDefaultConfig(): PageWatermarkConfig {
     imageScale: 100,
     opacityImage: 0.3,
     angleImage: 0,
+    repeat: false,
+    hSpacing: 200,
+    vSpacing: 150,
   };
 }
 
@@ -328,6 +331,17 @@ function getCurrentConfig(): PageWatermarkConfig {
       parseInt(
         (document.getElementById('angle-image') as HTMLInputElement)?.value
       ) || 0,
+    repeat:
+      (document.getElementById('repeat-watermark') as HTMLInputElement)
+        ?.checked || false,
+    hSpacing:
+      parseInt(
+        (document.getElementById('h-spacing') as HTMLInputElement)?.value
+      ) || 200,
+    vSpacing:
+      parseInt(
+        (document.getElementById('v-spacing') as HTMLInputElement)?.value
+      ) || 150,
   };
 }
 
@@ -408,6 +422,20 @@ function loadPageConfig(pageNum: number) {
   if (opacityValueImage)
     opacityValueImage.textContent = String(config.opacityImage);
   if (angleValueImage) angleValueImage.textContent = String(config.angleImage);
+
+  const repeatWatermark = document.getElementById(
+    'repeat-watermark'
+  ) as HTMLInputElement;
+  const repeatSpacingOptions = document.getElementById(
+    'repeat-spacing-options'
+  );
+  const hSpacing = document.getElementById('h-spacing') as HTMLInputElement;
+  const vSpacing = document.getElementById('v-spacing') as HTMLInputElement;
+
+  if (repeatWatermark) repeatWatermark.checked = config.repeat;
+  if (hSpacing) hSpacing.value = String(config.hSpacing);
+  if (vSpacing) vSpacing.value = String(config.vSpacing);
+  repeatSpacingOptions?.classList.toggle('hidden', !config.repeat);
 
   updatePresetHighlight(config.x, config.y);
 }
@@ -576,6 +604,22 @@ function setupEditorControls() {
     reader.readAsDataURL(file);
   });
 
+  const repeatWatermark = document.getElementById(
+    'repeat-watermark'
+  ) as HTMLInputElement;
+  const repeatSpacingOptions = document.getElementById(
+    'repeat-spacing-options'
+  );
+  const hSpacing = document.getElementById('h-spacing') as HTMLInputElement;
+  const vSpacing = document.getElementById('v-spacing') as HTMLInputElement;
+
+  repeatWatermark?.addEventListener('change', () => {
+    repeatSpacingOptions?.classList.toggle('hidden', !repeatWatermark.checked);
+    updateWatermarkOverlay();
+  });
+  hSpacing?.addEventListener('input', () => updateWatermarkOverlay());
+  vSpacing?.addEventListener('input', () => updateWatermarkOverlay());
+
   document.querySelectorAll('.pos-preset-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const pos = (btn as HTMLElement).dataset.pos;
@@ -689,6 +733,84 @@ function updateWatermarkOverlay() {
       imageOverlay.classList.add('hidden');
     }
   }
+
+  renderTileLayer(containerW, containerH);
+}
+
+/**
+ * Renders the repeated-watermark preview. Clones the (already-styled) anchor
+ * overlay onto a center-to-center grid around the anchor point, filling the
+ * preview container. Cleared when "Repeat" is off or there is nothing to show.
+ */
+function renderTileLayer(containerW: number, containerH: number) {
+  const layer = document.getElementById('watermark-tile-layer');
+  if (!layer) return;
+
+  layer.replaceChildren();
+
+  const repeat = (
+    document.getElementById('repeat-watermark') as HTMLInputElement
+  )?.checked;
+  if (!repeat) return;
+
+  const source = (
+    watermarkType === 'text'
+      ? document.getElementById('watermark-overlay')
+      : document.getElementById('image-watermark-overlay')
+  ) as HTMLElement | null;
+  if (!source || source.classList.contains('hidden')) return;
+
+  const hSpacing =
+    parseInt(
+      (document.getElementById('h-spacing') as HTMLInputElement)?.value
+    ) || 200;
+  const vSpacing =
+    parseInt(
+      (document.getElementById('v-spacing') as HTMLInputElement)?.value
+    ) || 150;
+  const hPx = Math.max(hSpacing, 20) * previewScale;
+  const vPx = Math.max(vSpacing, 20) * previewScale;
+  if (hPx <= 0 || vPx <= 0) return;
+
+  const angle =
+    parseInt(
+      (
+        document.getElementById(
+          watermarkType === 'text' ? 'angle-text' : 'angle-image'
+        ) as HTMLInputElement
+      )?.value
+    ) || 0;
+
+  const ax = pageState.watermarkX * containerW;
+  const ay = pageState.watermarkY * containerH;
+  // Half-diagonal margin so rotated edge tiles aren't dropped from the preview.
+  const margin = Math.hypot(source.offsetWidth, source.offsetHeight) / 2;
+
+  const iMin = Math.ceil((-margin - ax) / hPx);
+  const iMax = Math.floor((containerW + margin - ax) / hPx);
+  const jMin = Math.ceil((-margin - ay) / vPx);
+  const jMax = Math.floor((containerH + margin - ay) / vPx);
+
+  const MAX_PREVIEW_TILES = 400;
+  const frag = document.createDocumentFragment();
+  let count = 0;
+  for (let i = iMin; i <= iMax && count < MAX_PREVIEW_TILES; i++) {
+    for (let j = jMin; j <= jMax && count < MAX_PREVIEW_TILES; j++) {
+      if (i === 0 && j === 0) continue; // anchor box already shows this copy
+      const clone = source.cloneNode(true) as HTMLElement;
+      clone.removeAttribute('id');
+      clone.classList.remove('hidden');
+      const wrap = document.createElement('div');
+      wrap.style.position = 'absolute';
+      wrap.style.left = ax + i * hPx + 'px';
+      wrap.style.top = ay + j * vPx + 'px';
+      wrap.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+      wrap.appendChild(clone);
+      frag.appendChild(wrap);
+      count++;
+    }
+  }
+  layer.appendChild(frag);
 }
 
 function setupDragHandlers(container: HTMLElement) {
@@ -817,6 +939,9 @@ async function applyWatermark() {
     const pdfBytes = new Uint8Array(await pageState.pdfDoc.save());
     let resultBytes = pdfBytes;
 
+    const tileOf = (c: PageWatermarkConfig) =>
+      c.repeat ? { hSpacing: c.hSpacing, vSpacing: c.vSpacing } : undefined;
+
     if (applyToAllPages) {
       const config = getCurrentConfig();
       const posY = 1 - config.y;
@@ -846,6 +971,7 @@ async function applyWatermark() {
             x: config.x,
             y: posY,
             pageIndices,
+            tile: tileOf(config),
           })
         );
       } else {
@@ -875,6 +1001,7 @@ async function applyWatermark() {
             x: config.x,
             y: posY,
             pageIndices,
+            tile: tileOf(config),
           })
         );
       }
@@ -907,6 +1034,9 @@ async function applyWatermark() {
           opacityImage: config.opacityImage,
           angleImage: config.angleImage,
           imageFileName: config.imageFile?.name || null,
+          repeat: config.repeat,
+          hSpacing: config.hSpacing,
+          vSpacing: config.vSpacing,
         });
 
         if (!configGroups.has(key)) {
@@ -930,6 +1060,7 @@ async function applyWatermark() {
               x: config.x,
               y: posY,
               pageIndices: indices,
+              tile: tileOf(config),
             })
           );
         } else {
@@ -955,6 +1086,7 @@ async function applyWatermark() {
               x: config.x,
               y: posY,
               pageIndices: indices,
+              tile: tileOf(config),
             })
           );
         }

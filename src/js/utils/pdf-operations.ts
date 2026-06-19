@@ -1,4 +1,5 @@
 import { PDFDocument, degrees, rgb, StandardFonts, PageSizes } from 'pdf-lib';
+import type { PDFPage, PDFImage } from 'pdf-lib';
 import { loadPdfDocument } from './load-pdf-document.js';
 
 export async function mergePdfs(
@@ -182,6 +183,105 @@ export function parseDeletePages(str: string, totalPages: number): Set<number> {
   return pages;
 }
 
+/** Center-to-center distance (in PDF points) between repeated watermarks. */
+export interface TileSpacing {
+  hSpacing: number;
+  vSpacing: number;
+}
+
+const MIN_TILE_SPACING = 20;
+const MAX_TILES_PER_PAGE = 5000;
+
+/**
+ * Computes the center points of a center-to-center watermark grid that covers a
+ * page. The grid is anchored at (anchorX, anchorY) and extends outward in all
+ * directions; `margin` (typically the watermark's half-diagonal) extends the
+ * coverage past the page edges so rotated edge tiles aren't dropped. Spacing is
+ * clamped to a minimum and the total is capped to guard against pathological input.
+ */
+export function computeTileCenters(
+  anchorX: number,
+  anchorY: number,
+  pageWidth: number,
+  pageHeight: number,
+  margin: number,
+  hSpacing: number,
+  vSpacing: number
+): Array<{ x: number; y: number }> {
+  const hs = Math.max(hSpacing, MIN_TILE_SPACING);
+  const vs = Math.max(vSpacing, MIN_TILE_SPACING);
+
+  const iMin = Math.ceil((-margin - anchorX) / hs);
+  const iMax = Math.floor((pageWidth + margin - anchorX) / hs);
+  const jMin = Math.ceil((-margin - anchorY) / vs);
+  const jMax = Math.floor((pageHeight + margin - anchorY) / vs);
+
+  const centers: Array<{ x: number; y: number }> = [];
+  for (let i = iMin; i <= iMax; i++) {
+    for (let j = jMin; j <= jMax; j++) {
+      centers.push({ x: anchorX + i * hs, y: anchorY + j * vs });
+      if (centers.length >= MAX_TILES_PER_PAGE) return centers;
+    }
+  }
+  return centers;
+}
+
+/**
+ * Draws a watermark image onto a page. Without `tile`, it draws a single copy
+ * centered at (cx, cy). With `tile`, it repeats the watermark across the whole
+ * page on a center-to-center grid anchored at (cx, cy), extending outward in all
+ * directions. Every copy uses the same rotation-aware placement.
+ */
+function drawWatermarkOnPage(
+  page: PDFPage,
+  image: PDFImage,
+  params: {
+    cx: number;
+    cy: number;
+    imgWidth: number;
+    imgHeight: number;
+    angle: number;
+    opacity: number;
+    tile?: TileSpacing;
+  }
+): void {
+  const { cx, cy, imgWidth, imgHeight, angle, opacity, tile } = params;
+  const rad = (angle * Math.PI) / 180;
+  const halfW = imgWidth / 2;
+  const halfH = imgHeight / 2;
+
+  const drawAt = (centerX: number, centerY: number) => {
+    page.drawImage(image, {
+      x: centerX - Math.cos(rad) * halfW + Math.sin(rad) * halfH,
+      y: centerY - Math.sin(rad) * halfW - Math.cos(rad) * halfH,
+      width: imgWidth,
+      height: imgHeight,
+      opacity,
+      rotate: degrees(angle),
+    });
+  };
+
+  if (!tile) {
+    drawAt(cx, cy);
+    return;
+  }
+
+  const { width, height } = page.getSize();
+  // Half-diagonal margin so rotated tiles straddling the edges aren't dropped.
+  const margin = Math.hypot(halfW, halfH);
+  for (const { x, y } of computeTileCenters(
+    cx,
+    cy,
+    width,
+    height,
+    margin,
+    tile.hSpacing,
+    tile.vSpacing
+  )) {
+    drawAt(x, y);
+  }
+}
+
 export interface TextWatermarkOptions {
   text: string;
   fontSize: number;
@@ -191,6 +291,7 @@ export interface TextWatermarkOptions {
   x?: number;
   y?: number;
   pageIndices?: number[];
+  tile?: TileSpacing;
 }
 
 export async function addTextWatermark(
@@ -235,25 +336,20 @@ export async function addTextWatermark(
   const imgWidth = image.width / dpr;
   const imgHeight = image.height / dpr;
 
-  const rad = (options.angle * Math.PI) / 180;
-  const halfW = imgWidth / 2;
-  const halfH = imgHeight / 2;
-
   const targetIndices = options.pageIndices ?? pages.map((_, i) => i);
   for (const idx of targetIndices) {
     const page = pages[idx];
     if (!page) continue;
     const { width, height } = page.getSize();
-    const cx = posX * width;
-    const cy = posY * height;
 
-    page.drawImage(image, {
-      x: cx - Math.cos(rad) * halfW + Math.sin(rad) * halfH,
-      y: cy - Math.sin(rad) * halfW - Math.cos(rad) * halfH,
-      width: imgWidth,
-      height: imgHeight,
+    drawWatermarkOnPage(page, image, {
+      cx: posX * width,
+      cy: posY * height,
+      imgWidth,
+      imgHeight,
+      angle: options.angle,
       opacity: options.opacity,
-      rotate: degrees(options.angle),
+      tile: options.tile,
     });
   }
 
@@ -269,6 +365,7 @@ export interface ImageWatermarkOptions {
   x?: number;
   y?: number;
   pageIndices?: number[];
+  tile?: TileSpacing;
 }
 
 export async function addImageWatermark(
@@ -286,25 +383,21 @@ export async function addImageWatermark(
 
   const imgWidth = image.width * options.scale;
   const imgHeight = image.height * options.scale;
-  const rad = (options.angle * Math.PI) / 180;
-  const halfW = imgWidth / 2;
-  const halfH = imgHeight / 2;
 
   const targetIndices = options.pageIndices ?? pages.map((_, i) => i);
   for (const idx of targetIndices) {
     const page = pages[idx];
     if (!page) continue;
     const { width, height } = page.getSize();
-    const cx = posX * width;
-    const cy = posY * height;
 
-    page.drawImage(image, {
-      x: cx - Math.cos(rad) * halfW + Math.sin(rad) * halfH,
-      y: cy - Math.sin(rad) * halfW - Math.cos(rad) * halfH,
-      width: imgWidth,
-      height: imgHeight,
+    drawWatermarkOnPage(page, image, {
+      cx: posX * width,
+      cy: posY * height,
+      imgWidth,
+      imgHeight,
+      angle: options.angle,
       opacity: options.opacity,
-      rotate: degrees(options.angle),
+      tile: options.tile,
     });
   }
 

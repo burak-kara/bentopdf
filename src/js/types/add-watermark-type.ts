@@ -23,4 +23,7 @@ export interface PageWatermarkConfig {
   imageScale: number;
   opacityImage: number;
   angleImage: number;
+  repeat: boolean;
+  hSpacing: number;
+  vSpacing: number;
 }

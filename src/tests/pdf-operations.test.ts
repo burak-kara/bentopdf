@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   parsePageRange,
   parseDeletePages,
@@ -7,8 +7,19 @@ import {
   deletePdfPages,
   rotatePdfUniform,
   rotatePdfPages,
+  computeTileCenters,
+  addImageWatermark,
 } from '../js/utils/pdf-operations';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFPage } from 'pdf-lib';
+
+// A valid 1x1 transparent PNG, used to exercise the image-watermark draw path
+// without needing a canvas (unavailable under jsdom).
+const ONE_PX_PNG = Uint8Array.from(
+  atob(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  ),
+  (c) => c.charCodeAt(0)
+);
 
 async function createTestPdf(pageCount: number): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
@@ -267,6 +278,104 @@ describe('pdf-operations', () => {
       const doc = await PDFDocument.load(rotated);
       expect(doc.getPage(0).getRotation().angle).toBe(0);
       expect(doc.getPage(1).getRotation().angle).toBe(0);
+    });
+  });
+
+  describe('computeTileCenters', () => {
+    // 612x792 page (US Letter), anchor at center, no margin: an evenly spaced
+    // grid steps outward from the anchor in both directions.
+    it('produces a center-to-center grid covering the page', () => {
+      const centers = computeTileCenters(306, 396, 612, 792, 0, 200, 150);
+      // x offsets from 306 at pitch 200 within [0,612]: 106, 306, 506 -> 3 cols
+      // y offsets from 396 at pitch 150 within [0,792]: 96,246,396,546,696 -> 5 rows
+      const xs = [...new Set(centers.map((c) => c.x))].sort((a, b) => a - b);
+      const ys = [...new Set(centers.map((c) => c.y))].sort((a, b) => a - b);
+      expect(xs).toEqual([106, 306, 506]);
+      expect(ys).toEqual([96, 246, 396, 546, 696]);
+      expect(centers).toHaveLength(15);
+    });
+
+    it('always includes the anchor point itself', () => {
+      const centers = computeTileCenters(306, 396, 612, 792, 0, 200, 150);
+      expect(centers).toContainEqual({ x: 306, y: 396 });
+    });
+
+    it('extends coverage past the edges by the margin', () => {
+      const noMargin = computeTileCenters(306, 396, 612, 792, 0, 200, 150);
+      const withMargin = computeTileCenters(306, 396, 612, 792, 150, 200, 150);
+      expect(withMargin.length).toBeGreaterThan(noMargin.length);
+    });
+
+    it('clamps spacing below the minimum to avoid runaway density', () => {
+      // spacing 0 would be infinite tiles; it is clamped to the 20pt minimum.
+      const centers = computeTileCenters(306, 396, 612, 792, 0, 0, 0);
+      const xs = [...new Set(centers.map((c) => c.x))].sort((a, b) => a - b);
+      // pitch 20 from 306 across [0,612] -> centers at 6,26,...,606
+      expect(xs[1] - xs[0]).toBe(20);
+      expect(centers.length).toBeLessThanOrEqual(5000);
+    });
+  });
+
+  describe('addImageWatermark tiling (end-to-end)', () => {
+    it('draws a single watermark when tile is omitted', async () => {
+      const pdf = await createTestPdf(1);
+      const spy = vi.spyOn(PDFPage.prototype, 'drawImage');
+      try {
+        await addImageWatermark(pdf, {
+          imageBytes: ONE_PX_PNG,
+          imageType: 'png',
+          opacity: 0.3,
+          angle: 0,
+          scale: 0.1,
+          x: 0.5,
+          y: 0.5,
+        });
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('draws the full tiled grid when tile is provided', async () => {
+      const pdf = await createTestPdf(1);
+      const spy = vi.spyOn(PDFPage.prototype, 'drawImage');
+      try {
+        await addImageWatermark(pdf, {
+          imageBytes: ONE_PX_PNG,
+          imageType: 'png',
+          opacity: 0.3,
+          angle: 0,
+          scale: 0.1,
+          x: 0.5,
+          y: 0.5,
+          tile: { hSpacing: 200, vSpacing: 150 },
+        });
+        // Centered anchor on a 612x792 page: 3 columns x 5 rows = 15 copies.
+        expect(spy).toHaveBeenCalledTimes(15);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('tiles only the targeted pages', async () => {
+      const pdf = await createTestPdf(3);
+      const spy = vi.spyOn(PDFPage.prototype, 'drawImage');
+      try {
+        await addImageWatermark(pdf, {
+          imageBytes: ONE_PX_PNG,
+          imageType: 'png',
+          opacity: 0.3,
+          angle: 0,
+          scale: 0.1,
+          x: 0.5,
+          y: 0.5,
+          pageIndices: [0],
+          tile: { hSpacing: 200, vSpacing: 150 },
+        });
+        expect(spy).toHaveBeenCalledTimes(15);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

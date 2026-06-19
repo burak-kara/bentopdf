@@ -177,7 +177,11 @@
   "addWatermark": {
     "name": "Add Watermark",
     "subtitle": "Stamp text or an image over your PDF pages.",
-    "applyToAllPages": "Apply to all pages"
+    "applyToAllPages": "Apply to all pages",
+    "repeatWatermark": "Repeat watermark",
+    "horizontalSpacing": "Horizontal spacing",
+    "verticalSpacing": "Vertical spacing",
+    "spacingHelp": "Center-to-center distance in points."
   },
   "headerFooter": {
     "name": "Header & Footer",
